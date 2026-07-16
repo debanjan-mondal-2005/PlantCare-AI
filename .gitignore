@@ -27,6 +27,8 @@ output_audio/
 model/*.keras
 model/*.h5
 model/*.pb
+model/*.pth
+model/*.pt
 
 # IDE / OS files
 .vscode/

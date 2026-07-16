@@ -1,67 +1,124 @@
 import os
+import json
+import torch
+import torch.nn as nn
+# pyrefly: ignore [missing-import]
+from torchvision import transforms
 from PIL import Image
-from config import MODEL_PATH
+# pyrefly: ignore [missing-import]
+import timm
+
+from config import MODEL_PATH, CLASS_NAMES_PATH, IMAGE_SIZE, IMAGENET_MEAN, IMAGENET_STD
 
 # ==========================================
-# TODO: 
-# 1. Install TensorFlow: pip install tensorflow
-# 2. Load your trained model (.keras or .h5) below.
-# 3. Read your class labels to map predictions.
+# DEVICE DETECTION
 # ==========================================
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# import tensorflow as tf
-# model = None
-# class_names = []
+# ==========================================
+# CLASS NAMES
+# ==========================================
+# We load class names if available, else we provide dummy placeholders
+if os.path.exists(CLASS_NAMES_PATH):
+    with open(CLASS_NAMES_PATH, "r") as f:
+        class_names = json.load(f)
+else:
+    # A dummy list to avoid breaking if class_names.json is missing initially
+    class_names = [f"Class_{i}" for i in range(1000)]
 
-def predict_disease(image_path: str, original_filename: str = "") -> dict:
-    """
-    Predict plant leaf disease using the loaded TensorFlow model.
-    If the model has not been uploaded to the 'model/' directory, raises FileNotFoundError.
-    """
-    
-    # 1. Verify image exists and can be opened
+# ==========================================
+# MODEL ARCHITECTURE
+# ==========================================
+class ConvolutionalNetwork(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+        self.base_model = timm.create_model(
+            "resnet18",
+            pretrained=False, # Changed to False because HuggingFace is returning a 504 error, and you will load your own weights anyway
+            num_classes=num_classes
+        )
+
+    def forward(self, x):
+        return self.base_model(x)
+
+# ==========================================
+# MODEL LOADING
+# ==========================================
+num_classes = len(class_names)
+model = ConvolutionalNetwork(num_classes)
+
+if os.path.exists(MODEL_PATH):
     try:
-        with Image.open(image_path) as img:
-            img.verify()
+        model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+        print(f"Model successfully loaded from {MODEL_PATH}")
+    except Exception as e:
+        print(f"Error loading model weights: {e}")
+else:
+    print(f"WARNING: Model weights not found at {MODEL_PATH}. Using untrained model weights for now.")
+
+model.to(device)
+model.eval()
+
+# ==========================================
+# IMAGE PREPROCESSING
+# ==========================================
+transform = transforms.Compose([
+    transforms.Resize(IMAGE_SIZE),
+    transforms.CenterCrop(IMAGE_SIZE),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
+])
+
+# ==========================================
+# PREDICTION FUNCTION
+# ==========================================
+def predict_disease(image_path: str, original_filename: str = ""):
+    """
+    Predict plant leaf disease using the loaded PyTorch model.
+    Reads the image, converts to RGB, applies transformations,
+    predicts, applies softmax, and returns JSON structure.
+    """
+    try:
+        img = Image.open(image_path).convert("RGB")
     except Exception as e:
         raise ValueError(f"Invalid image file: {e}")
         
-    # 2. Check if TensorFlow model is uploaded
-    # if not os.path.exists(MODEL_PATH):
-    #     raise FileNotFoundError("Model Not Found")
-
-    # ==========================================
-    # TODO: Real Inference Code Example
-    # ==========================================
-    # img = Image.open(image_path).resize((224, 224))
-    # img_array = tf.keras.preprocessing.image.img_to_array(img)
-    # img_array = tf.expand_dims(img_array, 0) / 255.0
-    # predictions = model.predict(img_array)[0]
-    # class_index = tf.argmax(predictions).numpy()
-    # confidence = predictions[class_index]
-    # predicted_class = class_names[class_index]
-    # top_indices = tf.argsort(predictions, direction='DESCENDING')[:5].numpy()
-    # top_5 = [{"class": class_names[idx], "confidence": float(predictions[idx])} for idx in top_indices]
-    #
-    # return {
-    #     "disease": predicted_class,
-    #     "is_healthy": "healthy" in predicted_class.lower(),
-    #     "severity": "High", # Calculate or set based on class
-    #     "confidence": float(confidence),
-    #     "top_5": top_5
-    # }
-    # ==========================================
-
-    # If model exists but is not loaded (e.g. template placeholder),
-    # we return a clean default mock prediction structure for the user.
+    img_tensor = transform(img).unsqueeze(0).to(device)
+    
+    with torch.no_grad():
+        outputs = model(img_tensor)
+        probabilities = torch.nn.functional.softmax(outputs, dim=1)[0]
+        
+    # Get top 5 predictions
+    # k is min(5, num_classes) in case there are fewer than 5 classes
+    k = min(5, num_classes)
+    topk_prob, topk_indices = torch.topk(probabilities, k)
+    
+    top5 = []
+    for i in range(k):
+        idx = topk_indices[i].item()
+        prob = float(topk_prob[i].item()) # Keep as 0-1 float for the UI math
+        
+        raw_cls_name = class_names[idx] if idx < len(class_names) else f"Unknown_Class_{idx}"
+        # Format "Potato___healthy" to "Potato - Healthy"
+        cls_name = raw_cls_name.replace("___", " - ").replace("__", " - ").replace("_", " ")
+        
+        top5.append({
+            "class": cls_name,
+            "confidence": prob
+        })
+        
+    # Ensure there's always a return structure even if k < 1 (which shouldn't happen)
+    prediction = top5[0]["class"] if top5 else "Unknown"
+    confidence = top5[0]["confidence"] if top5 else 0.0
+    
+    is_healthy = "healthy" in prediction.lower()
+    severity = "Low" if is_healthy else "High"
+    
     return {
-        "disease": "Tomato - Late Blight (Model Active)",
-        "is_healthy": False,
-        "severity": "High",
-        "confidence": 0.95,
-        "top_5": [
-            {"class": "Tomato - Late Blight", "confidence": 0.95},
-            {"class": "Tomato - Early Blight", "confidence": 0.03},
-            {"class": "Tomato - Healthy", "confidence": 0.02}
-        ]
+        "disease": prediction,
+        "is_healthy": is_healthy,
+        "severity": severity,
+        "confidence": confidence,
+        "top_5": top5
     }

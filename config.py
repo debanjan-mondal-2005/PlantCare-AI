@@ -35,8 +35,13 @@ MAINTENANCE_MODE = os.getenv("MAINTENANCE_MODE", "False").lower() in ("true", "1
 MAINTENANCE_TIME = os.getenv("MAINTENANCE_TIME", "some time")
 
 # Model paths
-MODEL_PATH = os.path.join(MODEL_DIR, "plant_disease_model.keras")
+MODEL_PATH = os.path.join(MODEL_DIR, "plant_disease_resnet18.pth")
 CLASS_NAMES_PATH = os.path.join(MODEL_DIR, "class_names.json")
+
+# PyTorch Image Preprocessing Configuration
+IMAGE_SIZE = 224
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD = [0.229, 0.224, 0.225]
 
 # Ensure required directories exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)

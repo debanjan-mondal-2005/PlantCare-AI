@@ -40,7 +40,7 @@ def is_port_open(host: str, port: int) -> bool:
         return False
 
 
-def wait_for_server(host: str, port: int, timeout: int = 30) -> bool:
+def wait_for_server(host: str, port: int, timeout: int = 120) -> bool:
     """Poll until the server is ready or timeout is reached."""
     print(f"⏳ Waiting for server at {APP_URL} ...", end="", flush=True)
     start = time.time()

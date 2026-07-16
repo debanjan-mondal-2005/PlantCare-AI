@@ -688,4 +688,16 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    // Fix the Home button in navigation bar to reset the UI and go back to upload screen
+    const navLinks = document.querySelectorAll(".nav-links a");
+    if (navLinks.length > 0) {
+        navLinks[0].addEventListener("click", (e) => {
+            e.preventDefault();
+            if (typeof resetApp === "function") {
+                resetApp();
+            }
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+    }
+
 });
